@@ -1,0 +1,431 @@
+diff --git a/quiche/quic/core/quic_config.cc b/quiche/quic/core/quic_config.cc
+index c48001ac..8112b00f 100644
+--- a/quiche/quic/core/quic_config.cc
++++ b/quiche/quic/core/quic_config.cc
+@@ -443,6 +443,9 @@ QuicConfig::QuicConfig()
+       ack_delay_exponent_(kADE, PRESENCE_OPTIONAL),
+       max_udp_payload_size_(0, PRESENCE_OPTIONAL),
+       max_datagram_frame_size_(0, PRESENCE_OPTIONAL),
++      is_ptquic_enabled_(true),
++      migrate_per_n_pkt_(10),
++      retire_conn_id_per_n_migrate_(10000),
+       active_connection_id_limit_(0, PRESENCE_OPTIONAL) {
+   SetDefaults();
+ }
+@@ -996,6 +999,7 @@ const QuicTagVector& QuicConfig::create_session_tag_indicators() const {
+   return create_session_tag_indicators_;
+ }
+ 
++
+ void QuicConfig::SetDefaults() {
+   SetIdleNetworkTimeout(QuicTime::Delta::FromSeconds(kMaximumIdleTimeoutSecs));
+   SetMaxBidirectionalStreamsToSend(kDefaultMaxStreamsPerConnection);
+@@ -1394,4 +1398,29 @@ QuicErrorCode QuicConfig::ProcessTransportParameters(
+   return QUIC_NO_ERROR;
+ }
+ 
++void QuicConfig::SetEnablePinotQuic() {
++  is_ptquic_enabled_ = true;
++}
++
++bool QuicConfig::GetPinotQuicEnableStatus() const {
++  return is_ptquic_enabled_;
++}
++
++void QuicConfig::SetMigratePerNPkt(size_t pkt_no) {
++  migrate_per_n_pkt_ = pkt_no;
++}
++
++size_t QuicConfig::GetMigratePerNPkt() const {
++  return migrate_per_n_pkt_;
++}
++
++void QuicConfig::SetRetireConnIdPerNPkt(size_t pkt_no) {
++  retire_conn_id_per_n_migrate_ = pkt_no;
++}
++
++size_t QuicConfig::GetRetireConnIdPerNMigrate() const {
++  return retire_conn_id_per_n_migrate_;
++}
++
++
+ }  // namespace quic
+diff --git a/quiche/quic/core/quic_config.h b/quiche/quic/core/quic_config.h
+index 846872f6..c1f09876 100644
+--- a/quiche/quic/core/quic_config.h
++++ b/quiche/quic/core/quic_config.h
+@@ -510,6 +510,15 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
+   received_custom_transport_parameters() const {
+     return received_custom_transport_parameters_;
+   }
++	
++
++  // Raven QUIC
++  void SetEnablePinotQuic();
++  bool GetPinotQuicEnableStatus() const;
++  void SetMigratePerNPkt(size_t pkt_no);
++  size_t GetMigratePerNPkt() const;
++  void SetRetireConnIdPerNPkt(size_t pkt_no);
++  size_t GetRetireConnIdPerNMigrate() const;
+ 
+  private:
+   friend class test::QuicConfigPeer;
+@@ -630,6 +639,11 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
+   // Uses the max_datagram_frame_size transport parameter in IETF QUIC.
+   QuicFixedUint62 max_datagram_frame_size_;
+ 
++  // Raven migration paramters
++  bool is_ptquic_enabled_;
++  size_t migrate_per_n_pkt_;
++  size_t retire_conn_id_per_n_migrate_;
++
+   // Maximum number of connection IDs from the peer.
+   // Uses the active_connection_id_limit transport parameter in IETF QUIC.
+   QuicFixedUint62 active_connection_id_limit_;
+@@ -657,6 +671,7 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
+   // handshake.
+   TransportParameters::ParameterMap custom_transport_parameters_to_send_;
+   TransportParameters::ParameterMap received_custom_transport_parameters_;
++	
+ };
+ 
+ }  // namespace quic
+diff --git a/quiche/quic/core/quic_connection.cc b/quiche/quic/core/quic_connection.cc
+index af9eb4a7..32184f35 100644
+--- a/quiche/quic/core/quic_connection.cc
++++ b/quiche/quic/core/quic_connection.cc
+@@ -497,7 +497,12 @@ bool QuicConnection::ValidateConfigConnectionIds(const QuicConfig& config) {
+   return true;
+ }
+ 
+-void QuicConnection::SetFromConfig(const QuicConfig& config) {
++void QuicConnection::SetFromConfig(const QuicConfig& config) { 
++  // Init Raven config
++  is_ptquic_enabled_ = config.GetPinotQuicEnableStatus();
++  migrate_per_n_pkt_ = config.GetMigratePerNPkt();
++  retire_conn_id_per_n_migrate_ = config.GetRetireConnIdPerNMigrate();
++
+   if (config.negotiated()) {
+     // Handshake complete, set handshake timeout to Infinite.
+     SetNetworkTimeouts(QuicTime::Delta::Infinite(),
+@@ -661,6 +666,14 @@ void QuicConnection::SetFromConfig(const QuicConfig& config) {
+   connection_migration_use_new_cid_ =
+       validate_client_addresses_ &&
+       GetQuicReloadableFlag(quic_connection_migration_use_new_cid_v2);
++
++  // force connection_migration_use_new_cid_ to true for Raven quic
++  if (perspective_ == Perspective::IS_SERVER) {
++     connection_migration_use_new_cid_ = true;
++  } else {
++    if (is_ptquic_enabled_) connection_migration_use_new_cid_ = true;
++  }
++
+   if (config.HasReceivedMaxPacketSize()) {
+     peer_max_packet_size_ = config.ReceivedMaxPacketSize();
+     MaybeUpdatePacketCreatorMaxPacketLengthAndPadding();
+@@ -2814,6 +2827,17 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
+     MaybeSendInResponseToPacket();
+   }
+   SetPingAlarm();
++  // Raven quic
++  if (is_ptquic_enabled_) {
++    QUIC_DLOG(INFO) << "@@@@@@migrate_per_n_pkt_ " << migrate_per_n_pkt_ <<" " << stats_.packets_processed;
++    if (perspective_ == Perspective::IS_CLIENT && IsHandshakeConfirmed()) {
++      if (stats_.packets_processed % migrate_per_n_pkt_ == 0) {
++        QUIC_DLOG(INFO) <<"@@@@@@@@Migrate";
++	MigratePath(self_address, peer_address, writer_, false);
++      }
++    }
++  }
++
+   RetirePeerIssuedConnectionIdsNoLongerOnPath();
+   current_packet_data_ = nullptr;
+   is_current_packet_connectivity_probing_ = false;
+@@ -6789,10 +6813,12 @@ bool QuicConnection::UpdateConnectionIdsOnClientMigration(
+     default_path_.server_connection_id = alternative_path_.server_connection_id;
+     default_path_.stateless_reset_token =
+         alternative_path_.stateless_reset_token;
++    QUIC_DLOG(INFO) << "!!!!! UpdateConnectionIdsOnClientMigration:IsAlternativePath";
+     return true;
+   }
+   // Client migration is without path validation.
+   if (self_issued_cid_manager_ != nullptr) {
++	  QUIC_DLOG(INFO) << "!!!!! UpdateConnectionIdsOnClientMigration:MaybeSendNewConnectionIds";
+     self_issued_cid_manager_->MaybeSendNewConnectionIds();
+     if (!connected_) {
+       return false;
+@@ -6802,18 +6828,33 @@ bool QuicConnection::UpdateConnectionIdsOnClientMigration(
+        !self_issued_cid_manager_->HasConnectionIdToConsume()) ||
+       (peer_issued_cid_manager_ != nullptr &&
+        !peer_issued_cid_manager_->HasUnusedConnectionId())) {
+-    return false;
++	QUIC_DLOG(INFO) << "!!!!! UpdateConnectionIdsOnClientMigration:NoConnectionIdToConsume";
++    //Raven
++    if (!is_ptquic_enabled_) {
++      return false;
++    }
+   }
+   if (self_issued_cid_manager_ != nullptr) {
+     default_path_.client_connection_id =
+         *self_issued_cid_manager_->ConsumeOneConnectionId();
+   }
+   if (peer_issued_cid_manager_ != nullptr) {
++    // Raven
++    QUIC_DLOG(INFO) << "!!!!! Raven Migration  " << is_ptquic_enabled_;
++    if (is_ptquic_enabled_) {
++      const auto* connection_id_data =
++        peer_issued_cid_manager_->ConsumeOneUnusedConnectionIdRnd();
++        default_path_.server_connection_id = connection_id_data->connection_id;
++        default_path_.stateless_reset_token =
++        connection_id_data->stateless_reset_token; 
++	QUIC_DLOG(INFO) << "!!!!! UpdateConnectionIdsOnClientMigration:ConsumeOneUnusedConnectionId " << default_path_.server_connection_id;
++    } else {
+     const auto* connection_id_data =
+         peer_issued_cid_manager_->ConsumeOneUnusedConnectionId();
+     default_path_.server_connection_id = connection_id_data->connection_id;
+     default_path_.stateless_reset_token =
+         connection_id_data->stateless_reset_token;
++    }
+   }
+   return true;
+ }
+@@ -6824,9 +6865,17 @@ void QuicConnection::RetirePeerIssuedConnectionIdsNoLongerOnPath() {
+     return;
+   }
+   if (perspective_ == Perspective::IS_CLIENT) {
+-    peer_issued_cid_manager_->MaybeRetireUnusedConnectionIds(
++    if (is_ptquic_enabled_ ) {
++       if (stats_.migration_count % retire_conn_id_per_n_migrate_ == 0 && IsHandshakeConfirmed()) {
++         peer_issued_cid_manager_->MaybeRetireUnusedConnectionIds(
++                {default_path_.server_connection_id,
++                alternative_path_.server_connection_id});
++      }  
++    } else {
++	 peer_issued_cid_manager_->MaybeRetireUnusedConnectionIds(
+         {default_path_.server_connection_id,
+          alternative_path_.server_connection_id});
++    }
+   } else {
+     peer_issued_cid_manager_->MaybeRetireUnusedConnectionIds(
+         {default_path_.client_connection_id,
+@@ -6880,8 +6929,12 @@ bool QuicConnection::MigratePath(const QuicSocketAddress& self_address,
+       default_path_.self_address, self_address);
+   const auto peer_address_change_type = QuicUtils::DetermineAddressChangeType(
+       default_path_.peer_address, peer_address);
++  if (is_ptquic_enabled_) {
++
++  } else {
+   QUICHE_DCHECK(self_address_change_type != NO_CHANGE ||
+                 peer_address_change_type != NO_CHANGE);
++  }
+   const bool is_port_change = (self_address_change_type == PORT_CHANGE ||
+                                self_address_change_type == NO_CHANGE) &&
+                               (peer_address_change_type == PORT_CHANGE ||
+@@ -6891,6 +6944,8 @@ bool QuicConnection::MigratePath(const QuicSocketAddress& self_address,
+   SetQuicPacketWriter(writer, owns_writer);
+   MaybeClearQueuedPacketsOnPathChange();
+   OnSuccessfulMigration(is_port_change);
++  // Raven update migration counter
++  if (is_ptquic_enabled_) ++stats_.migration_count;
+   return true;
+ }
+ 
+diff --git a/quiche/quic/core/quic_connection.h b/quiche/quic/core/quic_connection.h
+index 8bb26293..531dd3a9 100644
+--- a/quiche/quic/core/quic_connection.h
++++ b/quiche/quic/core/quic_connection.h
+@@ -2248,7 +2248,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
+   bool should_proactively_validate_peer_address_on_path_challenge_ = false;
+ 
+   // Enable this via reloadable flag once this feature is complete.
+-  bool connection_migration_use_new_cid_ = false;
++  // For Raven, default is true
++  bool connection_migration_use_new_cid_ = true;
+ 
+   // If true, send connection close packet on INVALID_VERSION.
+   bool send_connection_close_for_invalid_version_ = false;
+@@ -2269,6 +2270,12 @@ class QUIC_EXPORT_PRIVATE QuicConnection
+ 
+   bool only_send_probing_frames_on_alternative_path_ =
+       GetQuicReloadableFlag(quic_not_bundle_ack_on_alternative_path);
++
++  // For Raven QUIC config
++  bool is_ptquic_enabled_ = true;
++  size_t migrate_per_n_pkt_ = 10;
++  size_t retire_conn_id_per_n_migrate_ = 10000;
++
+ };
+ 
+ }  // namespace quic
+diff --git a/quiche/quic/core/quic_connection_id_manager.cc b/quiche/quic/core/quic_connection_id_manager.cc
+index 46ff85f3..3ea593f4 100644
+--- a/quiche/quic/core/quic_connection_id_manager.cc
++++ b/quiche/quic/core/quic_connection_id_manager.cc
+@@ -187,6 +187,26 @@ QuicPeerIssuedConnectionIdManager::ConsumeOneUnusedConnectionId() {
+   return &active_connection_id_data_.back();
+ }
+ 
++//Raven
++const QuicConnectionIdData*
++QuicPeerIssuedConnectionIdManager::ConsumeOneUnusedConnectionIdRnd() {
++  while (!unused_connection_id_data_.empty()) {
++    active_connection_id_data_.push_back(unused_connection_id_data_.back());
++    unused_connection_id_data_.pop_back();
++  }
++  int idx = rand();
++  
++  QUIC_DLOG(INFO) << "ConsumeOneUnusedIDStat2:" <<  unused_connection_id_data_.size() << " " << active_connection_id_data_.size() << " " << idx;
++  for (const auto& cid_data : active_connection_id_data_) {
++      QUIC_DLOG(INFO) << "ConsumeOneUnusedIDStatActive1: " << (&cid_data)->connection_id;
++  }
++  for (const auto& cid_data : unused_connection_id_data_) {
++      QUIC_DLOG(INFO) << "ConsumeOneUnusedIDStatUnused1: " << (&cid_data)->connection_id;
++  }
++  
++  return &active_connection_id_data_.at(idx % active_connection_id_data_.size());
++}
++
+ void QuicPeerIssuedConnectionIdManager::PrepareToRetireActiveConnectionId(
+     const QuicConnectionId& cid) {
+   auto it = FindConnectionIdData(active_connection_id_data_, cid);
+@@ -405,12 +425,14 @@ void QuicSelfIssuedConnectionIdManager::RetireConnectionId() {
+ }
+ 
+ void QuicSelfIssuedConnectionIdManager::MaybeSendNewConnectionIds() {
++	QUIC_DLOG(INFO) << "############### MaybeSendNewConnectionIds " << active_connection_id_limit_;
+   while (active_connection_ids_.size() < active_connection_id_limit_) {
+     QuicNewConnectionIdFrame frame = IssueNewConnectionId();
+     if (!visitor_->SendNewConnectionId(frame)) {
+       break;
+     }
+   }
++  exit(0);
+ }
+ 
+ bool QuicSelfIssuedConnectionIdManager::HasConnectionIdToConsume() const {
+diff --git a/quiche/quic/core/quic_connection_id_manager.h b/quiche/quic/core/quic_connection_id_manager.h
+index 501310b1..1000f515 100644
+--- a/quiche/quic/core/quic_connection_id_manager.h
++++ b/quiche/quic/core/quic_connection_id_manager.h
+@@ -77,6 +77,8 @@ class QUIC_EXPORT_PRIVATE QuicPeerIssuedConnectionIdManager {
+   // the Id is marked as used. Returns nullptr if there is no unused connection
+   // Id.
+   const QuicConnectionIdData* ConsumeOneUnusedConnectionId();
++  // Raven
++  const QuicConnectionIdData* ConsumeOneUnusedConnectionIdRnd();
+ 
+   // Add each active connection Id that is no longer on path to the pending
+   // retirement connection Id list.
+diff --git a/quiche/quic/core/quic_connection_stats.h b/quiche/quic/core/quic_connection_stats.h
+index 4aaf7800..3eed3521 100644
+--- a/quiche/quic/core/quic_connection_stats.h
++++ b/quiche/quic/core/quic_connection_stats.h
+@@ -233,6 +233,9 @@ struct QUIC_EXPORT_PRIVATE QuicConnectionStats {
+   absl::optional<TlsServerOperationStats> tls_server_select_cert_stats;
+   absl::optional<TlsServerOperationStats> tls_server_compute_signature_stats;
+   absl::optional<TlsServerOperationStats> tls_server_decrypt_ticket_stats;
++
++  //Raven new stats: number of migration
++  QuicPacketCount migration_count = 0;
+ };
+ 
+ }  // namespace quic
+diff --git a/quiche/quic/core/quic_constants.h b/quiche/quic/core/quic_constants.h
+index 6f89ec1a..a50b23e9 100644
+--- a/quiche/quic/core/quic_constants.h
++++ b/quiche/quic/core/quic_constants.h
+@@ -104,7 +104,8 @@ const size_t kPublicFlagsSize = 1;
+ const size_t kQuicVersionSize = 4;
+ 
+ // Minimum number of active connection IDs that an end point can maintain.
+-const uint32_t kMinNumOfActiveConnectionIds = 2;
++// Raven: set to 10
++const uint32_t kMinNumOfActiveConnectionIds = 10;
+ 
+ // Length of the retry integrity tag in bytes.
+ // https://tools.ietf.org/html/draft-ietf-quic-transport-25#section-17.2.5
+@@ -296,7 +297,8 @@ const float kAckDecimationDelay = 0.25;
+ const QuicTime::Delta kAlarmGranularity = QuicTime::Delta::FromMilliseconds(1);
+ 
+ // Maximum number of unretired connection IDs a connection can have.
+-const size_t kMaxNumConnectonIdsInUse = 10u;
++// Raven: 100
++const size_t kMaxNumConnectonIdsInUse = 100u;
+ 
+ // Packet number of first sending packet of a connection. Please note, this
+ // cannot be used as first received packet because peer can choose its starting
+diff --git a/quiche/quic/core/quic_utils.cc b/quiche/quic/core/quic_utils.cc
+index e1b17972..1e3ed222 100644
+--- a/quiche/quic/core/quic_utils.cc
++++ b/quiche/quic/core/quic_utils.cc
+@@ -217,6 +217,14 @@ AddressChangeType QuicUtils::DetermineAddressChangeType(
+ 
+   bool old_ip_is_ipv4 = old_address.host().IsIPv4() ? true : false;
+   bool migrating_ip_is_ipv4 = new_address.host().IsIPv4() ? true : false;
++
++  if (!old_ip_is_ipv4 && !migrating_ip_is_ipv4) {
++      const int kSubnetMaskLengthIpv6 = 64;
++      if (old_address.host().InSameSubnet(new_address.host(), kSubnetMaskLengthIpv6)) {
++      return NO_CHANGE;
++    }
++  }
++
+   if (old_ip_is_ipv4 && !migrating_ip_is_ipv4) {
+     return IPV4_TO_IPV6_CHANGE;
+   }
+diff --git a/quiche/quic/tools/quic_toy_client.cc b/quiche/quic/tools/quic_toy_client.cc
+index 790e2636..ad449aeb 100644
+--- a/quiche/quic/tools/quic_toy_client.cc
++++ b/quiche/quic/tools/quic_toy_client.cc
+@@ -186,6 +186,17 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
+     int32_t, max_inbound_header_list_size, 128 * 1024,
+     "Max inbound header list size. 0 means default.");
+ 
++DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, enable_ptquic, true,
++                              "If true, enable PINOT quic.");
++
++DEFINE_QUICHE_COMMAND_LINE_FLAG(int32_t, migration_freq_count,
++                              10,
++                              "Migration per N packets received.");
++
++DEFINE_QUICHE_COMMAND_LINE_FLAG(int32_t, retire_id_freq_count,
++                              10000,
++                              "Retire all connection IDs per N migrations.");
++
+ namespace quic {
+ namespace {
+ 
+@@ -300,6 +311,21 @@ int QuicToyClient::SendRequestsAndPrintResponses(
+     config.SetClientConnectionOptions(
+         ParseQuicTagVector(client_connection_options_string));
+   }
++  if (GetQuicFlag(FLAGS_enable_ptquic)) {
++    config.SetEnablePinotQuic();
++  }
++
++  std::cout << "PINOT flags set " << GetQuicFlag(FLAGS_enable_ptquic) << " " <<
++  GetQuicFlag(FLAGS_migration_freq_count) <<
++  " " << GetQuicFlag(FLAGS_retire_id_freq_count) << std::endl;;
++
++  if (GetQuicFlag(FLAGS_migration_freq_count)) {
++    config.SetMigratePerNPkt(GetQuicFlag(FLAGS_migration_freq_count));
++  }
++
++  if (GetQuicFlag(FLAGS_retire_id_freq_count)) {
++    config.SetRetireConnIdPerNPkt(GetQuicFlag(FLAGS_retire_id_freq_count));
++  }
+   if (quiche::GetQuicheCommandLineFlag(FLAGS_multi_packet_chlo)) {
+     // Make the ClientHello span multiple packets by adding a custom transport
+     // parameter.
+diff --git a/quiche/quic/tools/quic_toy_server.cc b/quiche/quic/tools/quic_toy_server.cc
+index 1e31b2e0..fd9fc06e 100644
+--- a/quiche/quic/tools/quic_toy_server.cc
++++ b/quiche/quic/tools/quic_toy_server.cc
+@@ -40,6 +40,7 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
+ DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, enable_webtransport, false,
+                                 "If true, WebTransport support is enabled.");
+ 
++
+ namespace quic {
+ 
+ std::unique_ptr<quic::QuicSimpleServerBackend>
