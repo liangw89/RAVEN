@@ -111,51 +111,43 @@ def main():
 	parser.add_argument('-i', '--input',
 						type=str,
 						required=True,
-						metavar='<path/to/input_trace>',
 						help='Path to the directory where the orginal traces are stored.')
 
 	parser.add_argument('-o', '--output',
 						type=str,
 						required=True,
-						metavar='<path/to/output_trace>',
 						help='Path to the directory where the split traces will be stored.')
 
 	parser.add_argument('-m', '--method',
 						type=int,
 						required=True,
 						default=0,
-						metavar='<split/method>',
 						help='Split based on real subflows (0), simulated split (1), or sampling (2)')
 
 	parser.add_argument('-et', '--error_type',
 						type=int,
 						default=0,
-						metavar='<error_type>',
 						help='Error type: missing (0), wrongly included (1) or mixed both (2)')
 
 	parser.add_argument('-er', '--error_rate',
 						type=float,
 						default=0.1,
-						metavar='<error_rate>',
 						help='Error rate 0 to 1')
 
 	parser.add_argument('-f', '--freq',
 						type=int,
 						default=10,
-						metavar='<mig_freq>',
 						help='Migration frequency; -1 will enable random migration')
 
 
 	parser.add_argument('-d', '--dist',
 						type=str,
 						default=None,
-						metavar='<path/dist/db>',
 						help='Path to the packet distirbution data')
 
 	parser.add_argument('-rs', '--rnd_seed',
 						type=int,
 						default=None,
-						metavar='<random_seed>',
 						help='Set random seed')
 	
 	args = parser.parse_args()

@@ -1,5 +1,7 @@
 #### trace_process.py
 
+Simulate reconstruction attacks reconstruction errors (at least 1 error), and generate the traces of the flows reconstructed by the adversary. 
+
 |  option | desc  |detail|
 | ------------ | ------------ | ------------ |
 | i  | input  trace path   | **trace name**: siteNo_instNo <br> (unmonitored site's instNo is 0) <br> **trace format**: time, direction * size, flowID <br> (comma as delimiter)|
@@ -33,6 +35,16 @@ python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f -1
 - If rs is set, run the command below multiple times will produce the same traces
 ```
 python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f -1 -rs 1000
+```
+
+Only use the first subflow for training and testing (set er to >= 1.0 to drop all the other subflows)
+```
+python trace_process.py -i traces -o trace_out -m 0 -et 0 -er 1.0
+```
+
+Only use the original flow for training and testing (set f to a large value to keep all subflows)
+```
+python trace_process.py -i traces -o trace_out -m 1 -et 0 -er 0 -f 1000000
 ```
 
 #### format_convert.py 

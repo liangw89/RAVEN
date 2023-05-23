@@ -46,25 +46,21 @@ def main():
 	parser.add_argument('-i', '--input',
 						type=str,
 						required=True,
-						metavar='<path/to/input_trace>',
 						help='Path to the directory where the orginal traces are stored.')
 
 	parser.add_argument('-o', '--output',
 						type=str,
 						required=True,
-						metavar='<path/to/output_trace>',
 						help='Path to the directory where the processed traces are stored.')
 
 	parser.add_argument('-td', '--trace_delimiter',
 						type=str,
 						default="c",
-						metavar='<output/trace/delimiter>',
 						help='Trace delimiter: c (comma), t (tab), or s (space) ')
 
 	parser.add_argument('-fd', '--filename_delimiter',
 						type=str,
 						default='_',
-						metavar='<output/trace_name/delimiter>',
 						help='Filename delimiter: "_" or "-"')
 
 	parser.add_argument('-ns', '--no_size',

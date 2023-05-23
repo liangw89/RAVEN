@@ -89,19 +89,16 @@ def main():
 	parser.add_argument('-i', '--input',
 						type=str,
 						required=True,
-						metavar='<path/to/input_trace>',
 						help='Path to the directory where the orginal traces are stored.')
 
 	parser.add_argument('-o', '--output',
 						type=str,
 						required=True,
-						metavar='<path/to/output_trace>',
 						help='Path to the directory where the processed traces will be stored.')
 
 	parser.add_argument('-rs', '--rnd_seed',
 						type=int,
 						default=None,
-						metavar='<random_seed>',
 						help='Set random seed')
 
 	args = parser.parse_args()
