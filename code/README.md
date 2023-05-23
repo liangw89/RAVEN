@@ -1,4 +1,4 @@
-#### trace_process.py
+### trace_process.py
 
 Simulate reconstruction attacks reconstruction errors (at least 1 error), and generate the traces of the flows reconstructed by the adversary. 
 
@@ -19,35 +19,39 @@ Examples:
 Simulate the case that the adversary fails to include a subflow (missing error) in the reconstructed flow with a probability of 20%. Use simulated subflows and the migration frequency is 20 outgoing packets. The traces produced represent the reconstructed flows. 
 
 ```
-python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f 20
+python trace_process.py -i trace_in -o trace_out  -m 1 -et 0 -er 0.2 -f 20
 ```
 Simulate the case that the adversary include a wrong subflow (wrongly-included error) in the reconstructed flow with a probability of 10%. Use the subflows produced by RAVEN.  The wrong subflows are generated based on the reference traffic stats in dist.db.
 ```
-python trace_process.py -i traces -o trace_out  -m 0 -et 1 -er 0.1 -d dist.db
+python trace_process.py -i trace_in -o trace_out  -m 0 -et 1 -er 0.1 -d dist.db
 ```
 
 Simulate the case that the adversary fails to include a subflow (missing error) in the reconstructed flow with a probability of 20%. Use simulated subflows and random migration frequency.
 
 - Run the command below multiple times will produce different traces
 ```
-python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f -1
+python trace_process.py -i trace_in -o trace_out  -m 1 -et 0 -er 0.2 -f -1
 ```
-- If rs is set, run the command below multiple times will produce the same traces
+- If the **rs** option is set, run the command below multiple times will produce the same traces
 ```
-python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f -1 -rs 1000
-```
-
-Only use the first subflow for training and testing (set er to >= 1.0 to drop all the other subflows)
-```
-python trace_process.py -i traces -o trace_out -m 0 -et 0 -er 1.0
+python trace_process.py -i trace_in -o trace_out  -m 1 -et 0 -er 0.2 -f -1 -rs 1000
 ```
 
-Only use the original flow for training and testing (set f to a large value to keep all subflows)
+Only use the first subflow for training and testing (set **er** to >= 1.0 to drop all the other subflows)
 ```
-python trace_process.py -i traces -o trace_out -m 1 -et 0 -er 0 -f 1000000
+python trace_process.py -i trace_in -o trace_out -m 0 -et 0 -er 1.0
 ```
 
-#### format_convert.py 
+Use the original flow for training and testing (set **f** to a large value to keep all subflows)
+```
+python trace_process.py -i trace_in -o trace_out -m 1 -et 0 -er 0 -f 1000000
+```
+
+### format_convert.py 
+
+Convert the format of trace and trace name to  make the traces compatible with other website fingerprinting attack and defense frameworks. 
+
+The format of the input traces is fixed, and they are expected be the traces produced by **trace_process.py**
 
 |  option | desc  |detail|
 | ------------ | ------------ | ------------ |
@@ -58,13 +62,31 @@ python trace_process.py -i traces -o trace_out -m 1 -et 0 -er 0 -f 1000000
 |  ns | if remove size  | if set, only keep direction info <br> **default**: not set  |
 |  h | print help  |   --  |
 
+Examples:
 
-Simulate the case that the adversary fails to include a subflow (missing error) in the reconstructed flow with a probability of 20%. Use simulated subflows that migration frequency is 20 outgoing packets. 
-
-```
-python trace_process.py -i traces -o trace_out  -m 1 -et 0 -er 0.2 -f 20
-```
+The converted traces use tab as the delimiter, and trace name is "siteNo-instNo" (for DF/Tik-Tok attacks)
 
 ```
-python trace_process.py -i traces -o trace_out  -m 0 -et 2 -er 0.1 -d dist.db
+python format_convert.py -i trace_in -o trace_out  -td t -fd "-"
 ```
+
+Some attacks may only require the traces to be in the format of "time, direction"
+
+```
+python format_convert.py -i trace_in -o trace_out -td t -ns
+```
+
+### create_train_test.py
+
+In the Tik-Tok attacks, the monitor and unmonitored traces are stored in the different directories. One can run **format_convert.py** and then **create_train_test.py** to create compatible traces for Tik-Tok attacks.
+
+The script will also split the traces into monitor/unmonitored train/test sets based on **config.ini**, and store them into corresponding directories.
+
+If the **rs** option is set, run the command multiple times will always produce the same train/test sets.
+
+
+```
+python create_train_test.py -i trace_in -o trace_out  
+```
+
+
