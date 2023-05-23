@@ -20,8 +20,8 @@ def trace_format_conversion(dir_in, dir_out, trace_delimiter, filename_delimiter
 		shutil.rmtree(dir_out)
 	os.mkdir(dir_out)
 
-	
-	for _fn in os.listdir(dir_in):
+	fs = sorted(os.listdir(dir_in))
+	for _fn in fs:
 		if _fn.startswith("."): continue
 		fn_in = os.path.join(dir_in, _fn)
 		tmp = [v.strip("\n").split(",") for v in open(fn_in, "r").readlines()]

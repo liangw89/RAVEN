@@ -51,9 +51,12 @@ def process_trace(dir_in, dir_out, method, error_type, error_rate, mig_freq, dis
 		"""
 		pkt_dist = load_dist(dist_path)
 
-	fs = glob.glob("{}/*".format(dir_in))
-	for fn in fs:
-		if fn.startswith("."): continue
+	fs = sorted(os.listdir(dir_in))
+
+	for _fn in fs:
+		if _fn.startswith("."): continue
+		fn = os.path.join(dir_in, _fn)
+
 		if method == METHOD_REAL:
 			_out = split_trace_real(fn, error_type, error_rate, pkt_dist)
 
@@ -63,7 +66,7 @@ def process_trace(dir_in, dir_out, method, error_type, error_rate, mig_freq, dis
 		if method == METHOD_SAMPLE:
 			_out = split_trace_sampling(fn, error_rate)
 
-		fn = fn.replace(dir_in, dir_out)
+		fn = os.path.join(dir_out, _fn)
 		write_trace(_out, fn)
 
 
@@ -102,9 +105,6 @@ def examples(fn):
 	split_trace_sim(fn, MIXED_ERROR, 0.1, 10, pkt_dist)
 
 
-
-
-# process_trace_new_output_dir("traces2", "trace_out")
 
 def main():
 	parser = argparse.ArgumentParser()
