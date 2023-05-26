@@ -22,14 +22,20 @@ For PETS 2023 paper: *RAVEN: Stateless Rapid IP Address Variation for Enterprise
 - **Source**: `p4/`
 - **Setup**: Barefoot SDE 9.3.2
 
-To compile the code, install Barefoot SDE 9.3.2 in a VM and run
+Join https://community.intel.com/t5/Intel-Connectivity-Research/cmp-p/grouphub:connectivity-research-program 
+to get access to the Barefoot SDE
+
+To compile the code, install Barefoot SDE 9.3.2 in a VM (20 GB+) 
+(Instructions: https://twiki.cern.ch/twiki/bin/view/Main/Bfsde_installation)
+
+Run:
 ```
 ./p4_build.sh -p pinot_quic.p4 (may take > 20 mins)
 ./run_tofino_model.sh -p pinot_quic
 ./run_switchd.sh -p pinot_quic
 python ctr56tcprotate.py
 ```
-To test the code, one should use a real tofino switch connected to a IPv6 network. and:
+To test the code, one should use a real tofino switch connected to a IPv6 network, and:
 
 (1) `pinot_quic.p4`: Set `hdr.ethernet.dst_addr` to the client's ethernet address
 
