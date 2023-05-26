@@ -15,6 +15,7 @@ For PETS 2023 paper: *RAVEN: Stateless Rapid IP Address Variation for Enterprise
 #### Chrome patch
 
 - **Source**: `chrome/raven_quic.patch`
+- Check `chrome/README.md` for details
 
 #### P4 code
 
